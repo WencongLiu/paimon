@@ -26,6 +26,7 @@ import org.apache.paimon.flink.FlinkConnectorOptions;
 import org.apache.paimon.flink.PaimonDataStreamSinkProvider;
 import org.apache.paimon.flink.log.LogSinkProvider;
 import org.apache.paimon.flink.log.LogStoreTableFactory;
+import org.apache.paimon.flink.sorter.TableSorter;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.Table;
@@ -36,17 +37,26 @@ import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.sink.abilities.SupportsOverwrite;
 import org.apache.flink.table.connector.sink.abilities.SupportsPartitioning;
+import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.factories.DynamicTableFactory;
 import org.apache.flink.types.RowKind;
 
 import javax.annotation.Nullable;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 
 import static org.apache.paimon.CoreOptions.CHANGELOG_PRODUCER;
 import static org.apache.paimon.CoreOptions.LOG_CHANGELOG_MODE;
 import static org.apache.paimon.CoreOptions.MERGE_ENGINE;
+import static org.apache.paimon.flink.FlinkConnectorOptions.CLUSTER_KEY;
+import static org.apache.paimon.flink.FlinkConnectorOptions.CLUSTER_SORT;
+import static org.apache.paimon.flink.FlinkConnectorOptions.CLUSTER_STRATEGY;
+import static org.apache.paimon.table.BucketMode.UNAWARE;
+import static org.apache.paimon.utils.Preconditions.checkState;
 
 /** Table sink to create sink. */
 public abstract class FlinkTableSinkBase
@@ -124,13 +134,17 @@ public abstract class FlinkTableSinkBase
         // Do not sink to log store when overwrite mode
         final LogSinkFunction logSinkFunction =
                 overwrite ? null : (logSinkProvider == null ? null : logSinkProvider.createSink());
+        FileStoreTable fileStoreTable = (FileStoreTable) table;
         return new PaimonDataStreamSinkProvider(
                 (dataStream) ->
-                        new FlinkSinkBuilder((FileStoreTable) table)
+                        new FlinkSinkBuilder(fileStoreTable)
                                 .withInput(
-                                        new DataStream<>(
-                                                dataStream.getExecutionEnvironment(),
-                                                dataStream.getTransformation()))
+                                        partitionAndSortDataStreamByRange(
+                                                new DataStream<>(
+                                                        dataStream.getExecutionEnvironment(),
+                                                        dataStream.getTransformation()),
+                                                fileStoreTable,
+                                                conf))
                                 .withLogSinkFunction(logSinkFunction)
                                 .withOverwritePartition(overwrite ? staticPartitions : null)
                                 .withParallelism(conf.get(FlinkConnectorOptions.SINK_PARALLELISM))
@@ -167,5 +181,39 @@ public abstract class FlinkTableSinkBase
     @Override
     public void applyOverwrite(boolean overwrite) {
         this.overwrite = overwrite;
+    }
+
+    private DataStream<RowData> partitionAndSortDataStreamByRange(
+            DataStream<RowData> input, FileStoreTable fileStoreTable, Options conf) {
+        String clusterKeyString = conf.get(CLUSTER_KEY);
+        if (clusterKeyString == null) {
+            return input;
+        } else {
+            checkState(
+                    fileStoreTable.bucketMode().equals(UNAWARE),
+                    "Cluster supports only tables without primary key where 'bucket' is set to '-1'.");
+            List<String> clusterKeys = Arrays.asList(clusterKeyString.split(","));
+            List<String> fieldNames = fileStoreTable.schema().fieldNames();
+            if (!new HashSet<>(fieldNames).containsAll(new HashSet<>(clusterKeys))) {
+                throw new RuntimeException(
+                        String.format(
+                                "Field names %s should contains all cluster keys %s.",
+                                fieldNames, clusterKeys));
+            }
+            String clusterStrategy = conf.get(CLUSTER_STRATEGY);
+            TableSorter sorter =
+                    TableSorter.getSorter(
+                            input.getExecutionEnvironment(),
+                            input,
+                            fileStoreTable,
+                            clusterStrategy,
+                            clusterKeys);
+            Boolean enableSort = conf.get(CLUSTER_SORT);
+            if (enableSort) {
+                return sorter.rangePartitionAndSort();
+            } else {
+                return sorter.rangePartition();
+            }
+        }
     }
 }

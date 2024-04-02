@@ -111,7 +111,7 @@ public class SortCompactAction extends CompactAction {
                 TableSorter.getSorter(env, source, fileStoreTable, sortStrategy, orderColumns);
 
         new FlinkSinkBuilder(fileStoreTable)
-                .withInput(sorter.sort())
+                .withInput(sorter.rangePartitionAndSort())
                 .forCompact(true)
                 .withOverwritePartition(new HashMap<>())
                 .build();

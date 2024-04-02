@@ -332,6 +332,26 @@ public class FlinkConnectorOptions {
                     .withDescription(
                             "Sink committer memory to control heap memory of global committer.");
 
+    public static final ConfigOption<String> CLUSTER_KEY =
+            key("sink.cluster.key")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Specifies the comparison keys for range partitioning when set to a comma-separated list of field names like 'fieldName1,fieldName2'."
+                                    + " Any other content will result in an error."
+                                    + " The default value is null, which disables the range partition write feature.");
+
+    public static final ConfigOption<String> CLUSTER_STRATEGY =
+            key("sink.cluster.strategy").stringType().defaultValue("zorder").withDescription("");
+
+    public static final ConfigOption<Boolean> CLUSTER_SORT =
+            key("sink.cluster.sort")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "When set to 'true', a sorting step is added during range partition writing."
+                                    + " When set to 'false', no sorting step is added during range partition writing, which is the default behavior.");
+
     public static List<ConfigOption<?>> getOptions() {
         final Field[] fields = FlinkConnectorOptions.class.getFields();
         final List<ConfigOption<?>> list = new ArrayList<>(fields.length);

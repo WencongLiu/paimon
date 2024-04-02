@@ -47,7 +47,37 @@ public class OrderSorter extends TableSorter {
     }
 
     @Override
-    public DataStream<RowData> sort() {
+    public DataStream<RowData> rangePartition() {
+        final RowType valueRowType = table.rowType();
+        final int[] keyProjectionMap = table.schema().projection(orderColNames);
+        final RowType keyRowType =
+                addKeyNamePrefix(Projection.of(keyProjectionMap).project(valueRowType));
+
+        return SortUtils.rangePartitionStreamByKey(
+                origin,
+                table,
+                InternalTypeInfo.fromRowType(keyRowType),
+                new KeyComparatorSupplier(keyRowType),
+                new SortUtils.KeyAbstract<InternalRow>() {
+
+                    private transient org.apache.paimon.codegen.Projection keyProjection;
+
+                    @Override
+                    public void open() {
+                        // use key gen to speed up projection
+                        keyProjection = CodeGenUtils.newProjection(valueRowType, keyProjectionMap);
+                    }
+
+                    @Override
+                    public InternalRow apply(RowData value) {
+                        // deep copy by wrapper the Flink RowData
+                        return keyProjection.apply(new FlinkRowWrapper(value)).copy();
+                    }
+                });
+    }
+
+    @Override
+    public DataStream<RowData> rangePartitionAndSort() {
         final RowType valueRowType = table.rowType();
         final int[] keyProjectionMap = table.schema().projection(orderColNames);
         final RowType keyRowType =

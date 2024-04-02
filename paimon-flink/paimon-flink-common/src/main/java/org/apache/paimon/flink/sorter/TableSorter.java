@@ -18,7 +18,6 @@
 
 package org.apache.paimon.flink.sorter;
 
-import org.apache.paimon.flink.action.SortCompactAction;
 import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -27,7 +26,12 @@ import org.apache.flink.table.data.RowData;
 
 import java.util.List;
 
-/** An abstract TableSorter for {@link SortCompactAction}. */
+/**
+ * The {@link TableSorter} is used to divide the input DataStream into sorted partitions. It
+ * partitions the DataStream based on the specified range criteria, ensuring that each partition
+ * falls within certain defined boundaries. Within each such partition, the data elements are sorted
+ * according to the defined sorting logic.
+ */
 public abstract class TableSorter {
 
     protected final StreamExecutionEnvironment batchTEnv;
@@ -64,7 +68,19 @@ public abstract class TableSorter {
         }
     }
 
-    public abstract DataStream<RowData> sort();
+    /**
+     * Range partition the input stream.
+     *
+     * @return the range partitioned data stream
+     */
+    public abstract DataStream<RowData> rangePartition();
+
+    /**
+     * Range partition the input stream and sort the elements within each partition.
+     *
+     * @return the sorted data stream
+     */
+    public abstract DataStream<RowData> rangePartitionAndSort();
 
     public static TableSorter getSorter(
             StreamExecutionEnvironment batchTEnv,

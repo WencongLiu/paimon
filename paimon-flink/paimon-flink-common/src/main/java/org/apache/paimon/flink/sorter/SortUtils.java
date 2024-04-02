@@ -57,7 +57,77 @@ import java.util.function.Function;
  *                                                                                                                                                                                                                                   back to flink RowData
  * </pre>
  */
+@SuppressWarnings("unchecked")
 public class SortUtils {
+
+    /**
+     * Range partition the input stream by the key specified.
+     *
+     * @param inputStream the input data stream
+     * @param table the file store table
+     * @param keyTypeInformation the type info of range shuffle key
+     * @param shuffleKeyComparator comparator to compare the range shuffle key
+     * @param shuffleKeyAbstract abstract the range shuffle key from the input `RowData`
+     * @return the range partitioned data stream
+     * @param <KEY> the KEY type in range shuffle
+     */
+    public static <KEY> DataStream<RowData> rangePartitionStreamByKey(
+            final DataStream<RowData> inputStream,
+            final FileStoreTable table,
+            final TypeInformation<KEY> keyTypeInformation,
+            final SerializableSupplier<Comparator<KEY>> shuffleKeyComparator,
+            final KeyAbstract<KEY> shuffleKeyAbstract) {
+
+        final RowType valueRowType = table.rowType();
+        final int parallelism = inputStream.getParallelism();
+        CoreOptions options = table.coreOptions();
+        String sinkParallelismValue =
+                table.options().get(FlinkConnectorOptions.SINK_PARALLELISM.key());
+        final int sinkParallelism =
+                sinkParallelismValue == null
+                        ? inputStream.getParallelism()
+                        : Integer.parseInt(sinkParallelismValue);
+        if (sinkParallelism == -1) {
+            throw new UnsupportedOperationException(
+                    "The adaptive batch scheduler is not supported. Please set the sink parallelism using the key: "
+                            + FlinkConnectorOptions.SINK_PARALLELISM.key());
+        }
+        final int sampleSize = sinkParallelism * 1000;
+        final int rangeNum = sinkParallelism * 10;
+        // generate the KEY as the key of Pair.
+        DataStream<Tuple2<KEY, RowData>> inputWithKey =
+                inputStream
+                        .map(
+                                new RichMapFunction<RowData, Tuple2<KEY, RowData>>() {
+
+                                    @Override
+                                    public void open(Configuration parameters) throws Exception {
+                                        super.open(parameters);
+                                        shuffleKeyAbstract.open();
+                                    }
+
+                                    @Override
+                                    public Tuple2<KEY, RowData> map(RowData value) {
+                                        return Tuple2.of(shuffleKeyAbstract.apply(value), value);
+                                    }
+                                },
+                                new TupleTypeInfo<>(keyTypeInformation, inputStream.getType()))
+                        .setParallelism(parallelism);
+
+        // range shuffle by key
+        return (DataStream<RowData>)
+                RangeShuffle.rangeShuffleByKey(
+                        inputWithKey,
+                        shuffleKeyComparator,
+                        keyTypeInformation,
+                        sampleSize,
+                        rangeNum,
+                        sinkParallelism,
+                        valueRowType,
+                        options.sortBySize(),
+                        inputStream.getType(),
+                        false);
+    }
 
     /**
      * Sort the input stream by the key specified.
@@ -148,9 +218,14 @@ public class SortUtils {
                         rangeNum,
                         sinkParallelism,
                         valueRowType,
-                        options.sortBySize())
+                        options.sortBySize(),
+                        inputStream.getType(),
+                        true)
                 .map(
-                        a -> new JoinedRow(convertor.apply(a.f0), new FlinkRowWrapper(a.f1)),
+                        a ->
+                                new JoinedRow(
+                                        convertor.apply(((Tuple2<KEY, RowData>) a).f0),
+                                        new FlinkRowWrapper(((Tuple2<KEY, RowData>) a).f1)),
                         internalRowType)
                 .setParallelism(sinkParallelism)
                 // sort the output locally by `SortOperator`

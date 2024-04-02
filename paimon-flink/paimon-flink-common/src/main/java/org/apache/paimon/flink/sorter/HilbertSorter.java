@@ -58,21 +58,42 @@ public class HilbertSorter extends TableSorter {
     }
 
     @Override
-    public DataStream<RowData> sort() {
-        return sortStreamByHilbert(origin, table);
+    public DataStream<RowData> rangePartition() {
+        final HilbertIndexer hilbertIndexer = new HilbertIndexer(table.rowType(), orderColNames);
+        return SortUtils.rangePartitionStreamByKey(
+                origin,
+                table,
+                TypeInformation.of(byte[].class),
+                () ->
+                        (b1, b2) -> {
+                            assert b1.length == b2.length;
+                            for (int i = 0; i < b1.length; i++) {
+                                int ret = UnsignedBytes.compare(b1[i], b2[i]);
+                                if (ret != 0) {
+                                    return ret;
+                                }
+                            }
+                            return 0;
+                        },
+                new SortUtils.KeyAbstract<byte[]>() {
+                    @Override
+                    public void open() {
+                        hilbertIndexer.open();
+                    }
+
+                    @Override
+                    public byte[] apply(RowData value) {
+                        byte[] hilbert = hilbertIndexer.index(new FlinkRowWrapper(value));
+                        return Arrays.copyOf(hilbert, hilbert.length);
+                    }
+                });
     }
 
-    /**
-     * Sort the input stream by the given order columns with hilbert curve.
-     *
-     * @param inputStream the stream waited to be sorted
-     * @return the sorted data stream
-     */
-    private DataStream<RowData> sortStreamByHilbert(
-            DataStream<RowData> inputStream, FileStoreTable table) {
+    @Override
+    public DataStream<RowData> rangePartitionAndSort() {
         final HilbertIndexer hilbertIndexer = new HilbertIndexer(table.rowType(), orderColNames);
         return SortUtils.sortStreamByKey(
-                inputStream,
+                origin,
                 table,
                 KEY_TYPE,
                 TypeInformation.of(byte[].class),

@@ -92,7 +92,7 @@ public class RangeShuffle {
      * <p>The streams except the sample and histogram process stream will been blocked, so the the
      * sample and histogram process stream does not care about requiredExchangeMode.
      */
-    public static <T> DataStream<Tuple2<T, RowData>> rangeShuffleByKey(
+    public static <T> DataStream<?> rangeShuffleByKey(
             DataStream<Tuple2<T, RowData>> inputDataStream,
             SerializableSupplier<Comparator<T>> keyComparator,
             TypeInformation<T> keyTypeInformation,
@@ -100,7 +100,9 @@ public class RangeShuffle {
             int rangeNum,
             int outParallelism,
             RowType valueRowType,
-            boolean isSortBySize) {
+            boolean isSortBySize,
+            TypeInformation<RowData> rowDataTypeInfo,
+            boolean outputWithKey) {
         Transformation<Tuple2<T, RowData>> input = inputDataStream.getTransformation();
 
         OneInputTransformation<Tuple2<T, RowData>, Tuple2<T, Integer>> keyInput =
@@ -153,20 +155,34 @@ public class RangeShuffle {
                                         BasicTypeInfo.INT_TYPE_INFO, input.getOutputType()),
                                 input.getParallelism());
 
-        // 4. Remove the partition id. (shuffle according range partition)
-        return new DataStream<>(
-                inputDataStream.getExecutionEnvironment(),
-                new OneInputTransformation<>(
-                        new PartitionTransformation<>(
-                                preparePartition,
-                                new CustomPartitionerWrapper<>(
-                                        new AssignRangeIndexOperator.RangePartitioner(rangeNum),
-                                        new AssignRangeIndexOperator.Tuple2KeySelector<>()),
-                                StreamExchangeMode.BATCH),
-                        "REMOVE KEY",
-                        new RemoveRangeIndexOperator<>(),
-                        input.getOutputType(),
-                        outParallelism));
+        PartitionTransformation<Tuple2<Integer, Tuple2<T, RowData>>> customPartitioner =
+                new PartitionTransformation<>(
+                        preparePartition,
+                        new CustomPartitionerWrapper<>(
+                                new AssignRangeIndexOperator.RangePartitioner(rangeNum),
+                                new AssignRangeIndexOperator.Tuple2KeySelector<>()),
+                        StreamExchangeMode.BATCH);
+
+        // 4. Remove the range index. (shuffle according range partition)
+        if (outputWithKey) {
+            return new DataStream<>(
+                    inputDataStream.getExecutionEnvironment(),
+                    new OneInputTransformation<>(
+                            customPartitioner,
+                            "REMOVE RANGE INDEX",
+                            new RemoveRangeIndexOperator<>(),
+                            input.getOutputType(),
+                            outParallelism));
+        } else {
+            return new DataStream<>(
+                    inputDataStream.getExecutionEnvironment(),
+                    new OneInputTransformation<>(
+                            customPartitioner,
+                            "REMOVE RANGE INDEX AND KEY",
+                            new RemoveRangeIndexAndKeyOperator<>(),
+                            rowDataTypeInfo,
+                            outParallelism));
+        }
     }
 
     /** KeyAndSizeExtractor is responsible for extracting the sort key and row size. */
@@ -461,9 +477,28 @@ public class RangeShuffle {
         }
 
         @Override
-        public void processElement(StreamRecord<Tuple2<Integer, Tuple2<T, RowData>>> streamRecord)
-                throws Exception {
+        public void processElement(StreamRecord<Tuple2<Integer, Tuple2<T, RowData>>> streamRecord) {
             collector.collect(streamRecord.getValue().f1);
+        }
+    }
+
+    /** Remove the both range index and key, return the {@link RowData} */
+    private static class RemoveRangeIndexAndKeyOperator<T> extends TableStreamOperator<RowData>
+            implements OneInputStreamOperator<Tuple2<Integer, Tuple2<T, RowData>>, RowData> {
+
+        private static final long serialVersionUID = 1L;
+
+        private transient Collector<RowData> collector;
+
+        @Override
+        public void open() throws Exception {
+            super.open();
+            this.collector = new StreamRecordCollector<>(output);
+        }
+
+        @Override
+        public void processElement(StreamRecord<Tuple2<Integer, Tuple2<T, RowData>>> streamRecord) {
+            collector.collect(streamRecord.getValue().f1.f1);
         }
     }
 

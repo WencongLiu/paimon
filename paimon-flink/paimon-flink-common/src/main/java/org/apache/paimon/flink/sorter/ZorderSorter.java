@@ -58,22 +58,46 @@ public class ZorderSorter extends TableSorter {
     }
 
     @Override
-    public DataStream<RowData> sort() {
-        return sortStreamByZOrder(origin, table);
+    public DataStream<RowData> rangePartition() {
+        final ZIndexer zIndexer =
+                new ZIndexer(table.rowType(), orderColNames, table.coreOptions().varTypeSize());
+        return SortUtils.rangePartitionStreamByKey(
+                origin,
+                table,
+                TypeInformation.of(byte[].class),
+                () ->
+                        (b1, b2) -> {
+                            assert b1.length == b2.length;
+                            for (int i = 0; i < b1.length; i++) {
+                                int ret = UnsignedBytes.compare(b1[i], b2[i]);
+                                if (ret != 0) {
+                                    return ret;
+                                }
+                            }
+                            return 0;
+                        },
+                new SortUtils.KeyAbstract<byte[]>() {
+                    @Override
+                    public void open() {
+                        zIndexer.open();
+                    }
+
+                    @Override
+                    public byte[] apply(RowData value) {
+                        byte[] zorder = zIndexer.index(new FlinkRowWrapper(value));
+                        // we can just return the reused bytes zorder, because the sample operator
+                        // will remember the record to sample.
+                        return Arrays.copyOf(zorder, zorder.length);
+                    }
+                });
     }
 
-    /**
-     * Sort the input stream by the given order columns with z-order.
-     *
-     * @param inputStream the stream waited to be sorted
-     * @return the sorted data stream
-     */
-    private DataStream<RowData> sortStreamByZOrder(
-            DataStream<RowData> inputStream, FileStoreTable table) {
+    @Override
+    public DataStream<RowData> rangePartitionAndSort() {
         final ZIndexer zIndexer =
                 new ZIndexer(table.rowType(), orderColNames, table.coreOptions().varTypeSize());
         return SortUtils.sortStreamByKey(
-                inputStream,
+                origin,
                 table,
                 KEY_TYPE,
                 TypeInformation.of(byte[].class),
