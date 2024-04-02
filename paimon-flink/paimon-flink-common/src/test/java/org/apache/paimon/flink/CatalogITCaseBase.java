@@ -69,6 +69,10 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
     protected TableEnvironment sEnv;
     protected String path;
 
+    // 准备 TableEnvironment tEnv 和 sEnv
+    // 在 tEnv 和 sEnv 中 初始化 Catalog
+    // 设置并发为2
+    // 执行所有的DDL
     @BeforeEach
     public void before() throws IOException {
         tEnv = TableEnvironment.create(EnvironmentSettings.newInstance().inBatchMode().build());
@@ -98,14 +102,17 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         prepareEnv();
     }
 
+    // 透出 CatalogOptions
     protected Map<String, String> catalogOptions() {
         return Collections.emptyMap();
     }
 
+    // 一般都是禁用scan的并行度
     protected boolean inferScanParallelism() {
         return false;
     }
 
+    // 执行所有的DDL
     private void prepareEnv() {
         Parser parser = ((TableEnvironmentImpl) tEnv).getParser();
         for (String ddl : ddl()) {
@@ -121,6 +128,7 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         }
     }
 
+    // 设置并行度
     protected void setParallelism(int parallelism) {
         tEnv.getConfig()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, parallelism);
@@ -128,6 +136,7 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, parallelism);
     }
 
+    // 允许override 默认的并行度
     protected int defaultParallelism() {
         return 2;
     }
@@ -136,10 +145,12 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         return Collections.emptyList();
     }
 
+    // 批量执行SQL
     protected List<Row> batchSql(String query, Object... args) {
         return sql(query, args);
     }
 
+    // 执行单条SQL
     protected List<Row> sql(String query, Object... args) {
         try (CloseableIterator<Row> iter = tEnv.executeSql(String.format(query, args)).collect()) {
             return ImmutableList.copyOf(iter);
@@ -148,6 +159,7 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         }
     }
 
+    // 反复尝试直到成功
     protected void sqlAssertWithRetry(
             String query, Consumer<ListAssert<Row>> checker, Object... args) {
         long start = System.currentTimeMillis();
@@ -168,14 +180,17 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         }
     }
 
+    // 流式执行获取结果
     protected CloseableIterator<Row> streamSqlIter(String query, Object... args) {
         return sEnv.executeSql(String.format(query, args)).collect();
     }
 
+    // 流式执行获取 Blocked 结果
     protected BlockingIterator<Row, Row> streamSqlBlockIter(String query, Object... args) {
         return BlockingIterator.of(sEnv.executeSql(String.format(query, args)).collect());
     }
 
+    // 从Catalog获取 tableName 对应的元信息，即为 CatalogTable
     protected CatalogTable table(String tableName) throws TableNotExistException {
         Catalog catalog = flinkCatalog();
         CatalogBaseTable table =
@@ -183,6 +198,7 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         return (CatalogTable) table;
     }
 
+    // 根据table name 获取 paimon table 的底层存储 FileStoreTable
     protected FileStoreTable paimonTable(String tableName)
             throws org.apache.paimon.catalog.Catalog.TableNotExistException {
         org.apache.paimon.catalog.Catalog catalog = flinkCatalog().catalog();
@@ -194,12 +210,14 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         return (FlinkCatalog) tEnv.getCatalog(tEnv.getCurrentCatalog()).get();
     }
 
+    // 直接可以获取到底层一个Table的Path
     protected Path getTableDirectory(String tableName) {
         return new Path(
                 new File(path, String.format("%s.db/%s", tEnv.getCurrentDatabase(), tableName))
                         .toString());
     }
 
+    // 找到最新的Snapshot
     @Nullable
     protected Snapshot findLatestSnapshot(String tableName) {
         SnapshotManager snapshotManager =
@@ -208,6 +226,7 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         return id == null ? null : snapshotManager.snapshot(id);
     }
 
+    // 根据id找Snapshot
     @Nullable
     protected Snapshot findSnapshot(String tableName, long snapshotId) {
         SnapshotManager snapshotManager =
@@ -220,6 +239,7 @@ public abstract class CatalogITCaseBase extends AbstractTestBase {
         return path;
     }
 
+    // 对SQL执行的结果进行收集并排序
     protected List<Row> queryAndSort(String sql) {
         return sql(sql).stream()
                 .sorted(Comparator.comparingInt(r -> r.getFieldAs(0)))
