@@ -387,6 +387,40 @@ public class FlinkConnectorOptions {
                                             "Both can be configured at the same time: 'done-partition,success-file'.")
                                     .build());
 
+    public static final ConfigOption<String> CLUSTERING_COLUMNS =
+            key("sink.clustering.by-columns")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Specifies the column name(s) used for comparison during range partitioning, in the format 'columnName1,columnName2'. "
+                                    + "If not set or set to an empty string, it indicates that the range partitioning feature is not enabled.");
+
+    public static final ConfigOption<String> CLUSTERING_STRATEGY =
+            key("sink.clustering.strategy")
+                    .stringType()
+                    .defaultValue("auto")
+                    .withDescription(
+                            "Specifies the comparison algorithm used for range partitioning, including 'zorder', 'hilbert', and 'order', "
+                                    + "corresponding to the z-order curve algorithm, hilbert curve algorithm, and basic type comparison algorithm, "
+                                    + "respectively. When not configured, it will automatically determine the algorithm based on the number of columns "
+                                    + "in 'sink.clustering.by-columns'. 'order' is used for 1 column, 'zorder' for less than 5 columns, "
+                                    + "and 'hilbert' for 5 or more columns.");
+
+    public static final ConfigOption<Boolean> CLUSTERING_SORT_IN_CLUSTER =
+            key("sink.clustering.sort-in-cluster")
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription(
+                            "Indicates whether to further sort data belonged to each sink task after range partitioning.");
+
+    public static final ConfigOption<Integer> CLUSTERING_SAMPLE_FACTOR =
+            key("sink.clustering.sample-factor")
+                    .intType()
+                    .defaultValue(100)
+                    .withDescription(
+                            "Specifies the sample factor. Let S represent the total number of samples, F represent the sample factor, "
+                                    + "and P represent the sink parallelism, then S=F×P. The minimum allowed sample factor is 20.");
+
     public static List<ConfigOption<?>> getOptions() {
         final Field[] fields = FlinkConnectorOptions.class.getFields();
         final List<ConfigOption<?>> list = new ArrayList<>(fields.length);
